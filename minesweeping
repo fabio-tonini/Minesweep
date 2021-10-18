@@ -1,0 +1,394 @@
+#!/bin/python3
+import random
+import curses
+
+class Cell:
+	BOMB = 'M'
+	MARK = 'X'
+	def __init__(self, position, value = None):
+		self.value = value
+		self.hidden = True
+		self.marked = False
+		self.position = position
+	
+	def display_true_value(self):
+		if self.value == 0: return ' '
+		return str(self.value)
+	
+	def toogle_marked(self):
+		self.marked = not self.marked
+		
+	def display(self):
+		if self.hidden:
+			if self.marked: return Cell.MARK
+			return '?'
+		return self.display_true_value()
+		
+class Board:
+	def __init__(self, size, bombs):
+		self.size = size
+		self.grid = [[Cell((x,y),0) for y in range(self.size)] for x in range(self.size)]
+		self.bomb_positions = []
+		self.parent_game = None
+		self.random_grid(bombs)
+		self.hidden_cells = self.size*self.size
+	
+	def insert_bomb(self, position):
+		self.bomb_positions.append(position)
+		i,j = position
+		cell = self.grid[i][j]
+		if cell.value == Cell.BOMB: return
+		for s in (i-1,i,i+1):
+			if s < 0 or s >= self.size: continue
+			for t in (j-1,j,j+1):
+				if t < 0 or t >= self.size: continue
+				try: self.grid[s][t].value +=1
+				except: pass
+		self.grid[i][j].value = Cell.BOMB
+	
+	def win(self):
+		return self.hidden_cells == len(self.bomb_positions)
+		
+	def reveal(self,i,j, first = True):
+		
+		cell = self.grid[i][j]
+		if first and cell.marked: return
+		
+		if cell.hidden:
+			cell.marked = False
+			cell.hidden = False
+			self.hidden_cells-=1
+		else: return
+		
+		if cell.value == Cell.BOMB or cell.value > 0: return cell.value
+		
+		
+		for s in (i-1,i,i+1):
+			if s < 0 or s >= self.size: continue
+			for t in (j-1,j,j+1):
+				if t < 0 or t >= self.size: continue
+				if s == i and t == j: continue
+				self.reveal(s,t, False)
+				
+			
+	def random_grid(self,bombs):
+
+		pool = []
+		for i in range(self.size):
+			pool.extend([[i,j] for j in range(self.size)])
+		
+		random.shuffle(pool)
+		[self.insert_bomb(pos) for pos in pool[:bombs]]
+		return 
+		i = 0
+		l = self.size*self.size
+		while i < bombs:
+			i+=1
+			a = random.randint(0, l - i)
+			self.insert_bomb(pool.pop(a))
+	
+	def __repr__(self):
+		return '\n'.join([' '.join([ y.display_true_value() for y in x])  for x in self.grid])
+	
+class MineSweeper:
+	CELLw = 5
+	CELLh = 3
+	DIR = {'a': 'left', 's': 'down', 'w': 'up', 'd': 'right',
+			'KEY_LEFT': 'left', 
+			'KEY_DOWN': 'down',
+			'KEY_UP': 'up',
+			'KEY_RIGHT': 'right'
+			}
+	def __init__(self, size, bombs):
+		self.Board = Board(size, bombs)
+		self.Board.parent_game = self
+		self.size = size
+		self.cursor = (0,0)
+		self.markings_position = []
+		
+	def reveal_random(self):
+		START = 0
+		while START < 8:
+			for x in self.Board.grid:
+				for cell in x:
+					if cell.hidden and cell.value == START:
+						self.Board.reveal(*cell.position)
+						self.update_table()
+						self.update_markings()
+						return cell.position
+			START+=1
+		
+	def draw_around(self, i,j, marker, *flags):
+		w, h = MineSweeper.CELLw, MineSweeper.CELLh
+		positions = []
+		for u in range(w):
+			positions.append((h*j, w*i+u))
+			positions.append((h*j+h-1, w*i+u))
+		for v in range(h):
+			positions.append((h*j+v, w*i))
+			positions.append((h*j+v, w*i+w-1))
+		
+		for a,b in positions:
+			self.table.addstr(a, b, marker, *flags)
+			
+			
+	def draw_cursor(self):
+		i,j = self.cursor
+		
+		self.draw_around(i,j,'*',curses.color_pair(1))
+		
+		self.table.refresh()
+	
+	def Standout(self,i,j):
+		return (i+j) % 2 == 0
+		
+	def update_table(self, around = True):
+		
+		w, h = MineSweeper.CELLw, MineSweeper.CELLh
+		for i in range(self.size):
+			
+			for j in range(self.size):
+				cell = self.Board.grid[i][j]
+				if self.Standout(i,j):
+					if around:
+						for u in range(w):
+							for v in range(h):
+								self.table.addstr(h*j+v, w*i+u, ' ', curses.A_STANDOUT)
+					self.table.addstr(h*j+int(h/2), w*i+int(w/2), cell.display(), curses.A_STANDOUT)
+				else:
+					self.table.addstr(h*j+int(h/2), w*i+int(w/2), cell.display())
+			
+		self.table.refresh()
+		
+	def WIN(self):
+		for i,j in self.Board.bomb_positions:
+			self.Board.grid[i][j].hidden = False
+			self.draw_around(i,j,'W', curses.A_BLINK | curses.color_pair(3))
+		self.update_table(False)
+		self.infowindow.addstr(0,0,' WIN! ', curses.A_BLINK | curses.color_pair(3))
+		self.infowindow.refresh()
+		self.table.refresh()
+	
+	def LOSE(self):
+		for i,j in self.Board.bomb_positions:
+			self.Board.grid[i][j].hidden = False
+			self.draw_around(i,j,'L', curses.A_BLINK | curses.color_pair(2))
+		self.update_table(False)
+		self.infowindow.addstr(0,0,' LOST! ', curses.A_BLINK | curses.color_pair(2))
+		self.infowindow.refresh()
+		self.table.refresh()
+	
+	def remove_marking_around(self, i,j):
+		if self.Standout(i,j):
+			self.draw_around(i,j,' ', curses.A_STANDOUT)
+		else:
+			self.draw_around(i,j,' ')
+			
+	def move(self, direction):
+		i,j = self.cursor
+		
+		self.remove_marking_around(i,j)
+		
+		
+		if direction is 'right':
+			self.cursor = (i+1,j)
+		elif direction is 'left':
+			self.cursor = (i-1,j)
+		elif direction is 'up':
+			self.cursor = (i,j-1)
+		elif direction is 'down':
+			self.cursor = (i,j+1)
+		i,j = self.cursor
+		self.cursor = (i % self.size, j % self.size)
+		self.update_table()
+		self.update_markings()
+		self.draw_cursor()
+	
+	
+	def print(self,text):
+		text = str(text)
+		self.debug.addstr(self.debug_counter,0,text)
+		self.debug_counter+=1
+		self.debug.refresh()
+	
+	def quit(self):
+		quitting = 'Are you sure you want to quit? y/n'
+		self.infowindow.addstr(4,0,quitting, curses.A_BLINK)
+		self.infowindow.refresh()
+		key = self.infowindow.getkey()
+		if key in ('y','\n'): return True
+		self.infowindow.addstr(4,0,' '*len(quitting))
+		self.infowindow.addstr(4,0,'Press q to quit')
+		self.infowindow.refresh()
+		
+	def set_info(self):
+		self.infowindow.addstr(2,0,'Number of mines: %d' % len(self.Board.bomb_positions))
+		self.infowindow.addstr(4,0,'Press q to quit')
+		self.infowindow.addstr(6,0,'Press enter to uncover the cell')
+		self.infowindow.addstr(8,0,'Press x to lock/unlock a cell')
+		self.infowindow.addstr(10,0,'Press h for a hint')
+		self.infowindow.addstr(12,0,'Press r to see the rules')
+		self.infowindow.refresh()
+	
+	def hint(self):
+		self.remove_marking_around(*self.cursor)
+		position = self.reveal_random()
+		
+		if position: self.cursor = position
+		
+		self.draw_cursor()
+		
+	def toogle_marked(self,position):
+		i,j = position
+		cell = self.Board.grid[i][j]
+		if not cell.hidden: return 
+		
+		if cell.marked:
+			self.remove_marking_around(i,j)
+			self.markings_position.remove([i,j])
+		else:
+			self.draw_around(i,j,' ', curses.color_pair(4))
+			self.markings_position.append([i,j])
+			
+		cell.marked = not cell.marked
+	
+	def update_markings(self):
+		new_markings = []
+		for i,j in self.markings_position:
+			cell = self.Board.grid[i][j]
+			if cell.marked:
+				new_markings.append([i,j])
+				self.draw_around(i,j,' ', curses.color_pair(4))
+			else:
+				self.remove_marking_around(i,j)
+		
+		self.markings_position = new_markings
+				
+	def check_marking(self,i,j):
+		cell = self.Board.grid[i][j]
+		if cell.marked:
+			self.draw_around(i,j,' ', curses.color_pair(4))
+	
+	def rules(self):
+		rules = [
+				'Rules:',
+				'       There are %d mines in the field' % len(self.Board.bomb_positions),
+				'       Uncover all of them to win',
+				'       The number on each cell represents the number of nearby mines',
+				'       Good Luck!',
+				'Press any key to continue'
+				]
+		self.infowindow.erase()
+		i=0
+		for r in rules:
+			self.infowindow.addstr(i,0,r)
+			i+=2
+		self.infowindow.refresh()
+		self.infowindow.getkey()
+		self.infowindow.erase()
+		self.set_info()
+		
+	def play_again(self):
+		play_again = 'Press q to quit or any other key to play again'
+		self.infowindow.addstr(2,0,play_again)
+		self.infowindow.clrtobot()
+		if self.infowindow.getkey() == 'q': return
+		for x in self.Board.grid:
+			for cell in x:
+				self.remove_marking_around(*cell.position)
+		self.__init__(self.size, len(self.Board.bomb_positions))
+		self.infowindow.erase()
+		
+		self.set_info()
+		
+		self.play()
+	
+	def draw(self, stdscr):
+		curses.init_pair(1, curses.COLOR_RED, curses.COLOR_YELLOW)
+		curses.init_pair(2, curses.COLOR_WHITE, curses.COLOR_RED)
+		curses.init_pair(3, curses.COLOR_WHITE, curses.COLOR_GREEN)
+		curses.init_pair(4, curses.COLOR_WHITE, curses.COLOR_BLUE)
+		
+		stdscr.clear()
+		curses.curs_set(0)
+		w, h = MineSweeper.CELLw, MineSweeper.CELLh
+		stdscr.addstr(1,w,'M i n e s w e e p i n g')
+		stdscr.refresh()
+		
+		self.table = curses.newwin(h*(self.size+1),w*(self.size+1),h,w)
+		self.table.keypad(True)
+		
+		self.debug = curses.newwin(100,100,0, w*(self.size+1))
+		self.debug_counter = 0
+		
+		self.infowindow = curses.newwin(100,100,h, w*(self.size+3))
+		self.set_info()
+	
+	def play(self):
+		self.update_table()
+		self.reveal_random()
+		self.draw_cursor()
+		self.table.refresh()
+		
+		WINNING = True
+		while True:
+			if not WINNING:
+				return self.play_again()
+			
+			key = self.table.getkey()
+			if key == 'q':
+				if self.quit(): return
+				continue
+			if not WINNING: continue
+
+			
+			if key in MineSweeper.DIR.keys():
+				self.move(MineSweeper.DIR[key])
+			elif key == 'x':
+				self.toogle_marked(self.cursor)
+				self.update_table(False)
+			elif key == '\n':
+				res = self.Board.reveal(*self.cursor)
+				if res == Cell.BOMB:
+					self.update_markings()
+					self.update_table()
+					self.LOSE()
+					WINNING = False
+				elif self.Board.win():
+					self.update_markings()
+					self.update_table()
+					self.WIN()
+					WINNING = False
+				else:
+					self.update_table()
+					self.update_markings()
+
+					self.draw_cursor()
+			elif key == 'h':
+				self.hint()
+			elif key == 'r':
+				self.rules()
+			
+			
+			self.table.refresh()
+
+	def draw_and_play(self, stdscr):
+		
+		self.draw(stdscr)
+		self.play()
+		
+	def main(self):
+		curses.wrapper(self.draw_and_play)
+
+def play():
+	size = int(input('Choose the size: '))
+	mines = size*size
+	while mines >= size*size:
+		mines = int(input('How many mines? '))
+	
+	M=MineSweeper(size,mines)
+	M.main()
+	
+if __name__ == '__main__':
+	play()
+	
