@@ -377,18 +377,18 @@ class MineSweeper:
 		self.draw(stdscr)
 		self.play()
 		
-	def main(self):
+	def run(self):
 		curses.wrapper(self.draw_and_play)
 
-def play():
+def main():
 	size = int(input('Choose the size: '))
 	mines = size*size
 	while mines >= size*size:
 		mines = int(input('How many mines? '))
 	
 	M=MineSweeper(size,mines)
-	M.main()
+	M.run()
 	
 if __name__ == '__main__':
-	play()
+	main()
 	
